@@ -1,0 +1,213 @@
+<body bgcolor=black>
+<center><canvas id=canvas width=800 height=800></canvas>
+
+<script src=webgl.js></script>
+<script>
+
+function Scene() {
+
+   this.vertexShader = `#version 300 es
+   in vec3 aPos;
+   out vec3 vPos;
+
+   void main() {
+      gl_Position = vec4(aPos, 1.);
+      vPos = aPos;
+   }`;
+
+   this.fragmentShader = `#version 300 es
+   precision highp float;
+
+   uniform float uTime;
+
+   in vec3 vPos;
+   out vec4 fragColor;
+
+
+   // Make a rectangle
+   float box(
+      vec2 p,
+      vec2 center,
+      vec2 size
+   ) {
+
+      vec2 d =
+         abs(p - center) - size;
+
+      float distance =
+         max(d.x, d.y);
+
+      return
+         1. - smoothstep(
+            0.,
+            .015,
+            distance
+         );
+   }
+
+
+   void main() {
+
+      vec2 p = vPos.xy;
+
+      // ----------------
+      // Letter E
+      // ----------------
+
+      float E = 0.;
+
+      // Vertical line
+      E = max(
+         E,
+         box(
+            p,
+            vec2(-.45, 0.),
+            vec2(.06, .45)
+         )
+      );
+
+      // Top
+      E = max(
+         E,
+         box(
+            p,
+            vec2(-.28, .39),
+            vec2(.23, .06)
+         )
+      );
+
+      // Middle
+      E = max(
+         E,
+         box(
+            p,
+            vec2(-.30, 0.),
+            vec2(.20, .06)
+         )
+      );
+
+      // Bottom
+      E = max(
+         E,
+         box(
+            p,
+            vec2(-.28, -.39),
+            vec2(.23, .06)
+         )
+      );
+
+
+      // ----------------
+      // Letter J
+      // ----------------
+
+      float J = 0.;
+
+      // Vertical line
+      J = max(
+         J,
+         box(
+            p,
+            vec2(.45, .05),
+            vec2(.06, .40)
+         )
+      );
+
+      // Top
+      J = max(
+         J,
+         box(
+            p,
+            vec2(.28, .39),
+            vec2(.23, .06)
+         )
+      );
+
+      // Bottom
+      J = max(
+         J,
+         box(
+            p,
+            vec2(.28, -.35),
+            vec2(.18, .06)
+         )
+      );
+
+      // Small left part at bottom
+      J = max(
+         J,
+         box(
+            p,
+            vec2(.13, -.27),
+            vec2(.06, .14)
+         )
+      );
+
+
+      float letters =
+         max(E, J);
+
+
+      // Animated color
+      vec3 blue =
+         vec3(.05, .7, 1.);
+
+      vec3 pink =
+         vec3(1., .1, .6);
+
+      float t =
+         .5 + .5 *
+         sin(uTime + 3. * p.y);
+
+      vec3 letterColor =
+         mix(blue, pink, t);
+
+
+      // Moving scan lines
+      float scan =
+         .7 +
+         .3 * sin(
+            30. * p.y
+            - 5. * uTime
+         );
+
+
+      // Background
+      float backgroundWave =
+         .5 +
+         .5 * sin(
+            6. * p.x
+            + 3. * p.y
+            - uTime
+         );
+
+      vec3 background =
+         backgroundWave *
+         vec3(.03, .01, .10);
+
+
+      vec3 color =
+         background
+         + letters
+         * letterColor
+         * scan;
+
+
+      fragColor =
+         vec4(color, 1.);
+   }`;
+
+   let startTime = Date.now() / 1000;
+
+   this.update = () => {
+      setUniform(
+         '1f',
+         'uTime',
+         Date.now() / 1000 - startTime
+      );
+   }
+}
+
+gl_start(canvas, new Scene());
+
+</script>

@@ -1,0 +1,78 @@
+<body bgcolor=black>
+<center><canvas id=canvas width=800 height=800></canvas>
+
+<script src=webgl.js></script>
+<script>
+
+function Scene() {
+
+   this.vertexShader = `#version 300 es
+   in vec3 aPos;
+   out vec3 vPos;
+
+   void main() {
+      gl_Position = vec4(aPos, 1.);
+      vPos = aPos;
+   }`;
+
+   this.fragmentShader = `#version 300 es
+   precision highp float;
+
+   uniform float uTime;
+
+   in vec3 vPos;
+   out vec4 fragColor;
+
+   void main() {
+
+      vec2 p = vPos.xy;
+
+      // Three waves moving in different directions
+      float wave1 = sin(12. * p.x + 3. * uTime);
+
+      float wave2 = sin(
+         10. * (p.x + p.y) - 2. * uTime
+      );
+
+      float wave3 = cos(
+         14. * p.y + 2.5 * uTime
+      );
+
+      // Combine the waves
+      float wave =
+         (wave1 + wave2 + wave3) / 3.;
+
+      // Make bright lines where the waves meet
+      float line =
+         1. - smoothstep(.02, .15, abs(wave));
+
+      // Two colors
+      vec3 blue = vec3(.05, .4, 1.);
+      vec3 pink = vec3(1., .1, .6);
+
+      // Change color according to the wave value
+      float t = .5 + .5 * wave;
+
+      vec3 color =
+         mix(blue, pink, t);
+
+      // Make the wave lines brighter
+      color += line * vec3(.8, .2, .8);
+
+      fragColor = vec4(color, 1.);
+   }`;
+
+   let startTime = Date.now() / 1000;
+
+   this.update = () => {
+      setUniform(
+         '1f',
+         'uTime',
+         Date.now() / 1000 - startTime
+      );
+   }
+}
+
+gl_start(canvas, new Scene());
+
+</script>

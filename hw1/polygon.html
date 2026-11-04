@@ -1,0 +1,226 @@
+<body bgcolor=black>
+<center><canvas id=canvas width=800 height=800></canvas>
+<script src=webgl.js></script>
+<script>
+
+function Scene() {
+
+   this.vertexShader = `#version 300 es
+   in  vec3 aPos;
+   out vec3 vPos;
+   void main() {
+      gl_Position = vec4(aPos, 1.);
+      vPos = aPos;
+   }`;
+
+   this.fragmentShader = `#version 300 es
+   precision highp float;
+   uniform float uTime;
+   in  vec3 vPos;
+   out vec4 fragColor;
+
+   
+   void main(){
+      vec2 p = vPos.xy;
+
+      // use for 4. 5. 6.
+      /*float c =cos(uTime);
+      float s =sin(uTime);
+
+      vec2 q = vec2(
+         c * p.x - s *p.y,
+         s * p.x + c * p.y
+      );
+      */
+
+
+      // only use for 1. 2. 3.     
+      //float d = max(abs(p.x),abs(p.y));
+      /*
+      //1. make the rect fill with red
+      if (d < .5){
+         fragColor = vec4(1., 0., 0., 1.);
+      }
+      else {
+         fragColor = vec4(0., 0., 0., 1.);
+      }
+      */
+
+     // only use for 2. 3.         
+     //float edge = abs(d - .5);
+      /*
+      //2. make the rect not fill with red
+     if (edge < .02){
+      fragColor = vec4(1., 0., 0., 1.);
+     }
+      else{
+         fragColor = vec4(0., 0., 0., 1.);
+      }
+      */
+
+
+     /*
+     //3. smoothstep the rect
+     float line = 1. - smoothstep(.01, .03, edge);
+     fragColor = vec4(line, 0., 0., 1.);
+      */
+
+      /*
+      //4. rotate rect
+      float d = max(abs(q.x), abs(q.y));
+
+      float edge = abs(d - .5);
+      
+      float line = 1. - smoothstep(.01, .03, edge);
+
+      fragColor = vec4(line, 0., 0., 1.);
+      */
+
+      /*
+      //5. have the breath one
+      float d = max(abs(q.x), abs(q.y));
+
+      float size = .5 + .1 * sin(2. * uTime);
+
+      float edge = abs(d - size);
+
+      float line = 1. - smoothstep(.01, .03, edge);
+
+      fragColor = vec4(line, 0., 0., 1.);
+      */
+
+      /*
+      //6. change the color
+      float d = max(abs(q.x), abs(q.y));
+
+      float size = .5 + .1 * sin(2. * uTime);
+
+      float edge = abs(d - size);
+
+      float line = 1. - smoothstep(.01, .03, edge);
+
+      vec3 color1 = vec3(.1, .3, 1.);
+      vec3 color2 = vec3(1., .1, .6);
+      
+      float t =.5 + .5 *sin(uTime);
+      
+      vec3 color = mix(color1, color2, t);
+      fragColor = vec4(line * color, 1.);
+      */
+
+      /*
+      //6. use the same speed to spin
+      float d = max(abs(q.x), abs(q.y));
+      vec3 color1 = vec3(.1, .3, 1.);
+      vec3 color2 = vec3(1., .1, .6);
+
+      vec3 finalColor = vec3(0.);
+
+      for (int i =0; i<5; i++){
+         float fi = float(i);
+
+         float size = .2 + .12*fi;
+
+         float edge = abs(d - size);
+
+         float line = 1. - smoothstep(.01, .03, edge);
+
+         float t = .5 + .5 * sin(uTime +fi);
+
+         vec3 color = mix(color1, color2, t);
+
+         finalColor += line * color;
+      }
+
+      fragColor = vec4(finalColor, 1.);
+      */
+
+      /*
+      //7. five rect to roate
+      vec3 color1 = vec3(.1, .3, 1.);
+      vec3 color2 = vec3(1., .1, .6);
+
+      vec3 finalColor = vec3(0.);
+
+      for (int i = 0; i < 5; i++) {
+
+         float fi = float(i);
+
+         float angle = uTime * (.4 + .15 * fi);
+
+         float c = cos(angle);
+         float s = sin(angle);
+
+         vec2 q = vec2(
+            c * p.x - s * p.y,
+            s * p.x + c * p.y
+         );
+
+         float d = max(abs(q.x), abs(q.y));
+
+         float size = .2 + .12 * fi;
+
+         float edge = abs(d - size);
+
+         float line = 1. - smoothstep(.01, .03, edge);
+
+         float t = .5 + .5 * sin(uTime + fi);
+
+         vec3 color = mix(color1, color2, t);
+
+         finalColor += line * color;
+      }
+      
+      fragColor = vec4(finalColor, 1.);
+      */
+      vec3 color1 = vec3(.1, .3, 1.);
+      vec3 color2 = vec3(1., .1, .6);
+
+      vec3 finalColor = vec3(0.);
+
+      for (int i = 0; i < 5; i++) {
+
+         float fi = float(i);
+
+         float direction = mod(fi, 2.) < 1. ? 1. : -1.;
+
+         float angle = direction * uTime * (.4 + .15 * fi);
+
+         float c = cos(angle);
+         float s = sin(angle);
+
+         vec2 q = vec2(
+            c * p.x - s * p.y,
+            s * p.x + c * p.y
+         );
+
+         float d = max(abs(q.x), abs(q.y));
+
+         float size = .2 + .12 * fi;
+
+         float edge = abs(d - size);
+
+         float line = 1. - smoothstep(.01, .03, edge);
+
+         float t = .5 + .5 * sin(uTime + fi);
+
+         vec3 color = mix(color1, color2, t);
+
+         finalColor += line * color;
+      }
+      
+      fragColor = vec4(finalColor, 1.);
+
+
+
+   }`; 
+
+   let startTime = Date.now() / 1000;
+
+   this.update = () => {
+      setUniform('1f', 'uTime', Date.now() / 1000 - startTime);
+   }
+}
+
+gl_start(canvas, new Scene());
+</script>

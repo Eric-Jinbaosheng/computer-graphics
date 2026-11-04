@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optical Inspection — Quadric Ray Tracing</title>
+<style>
+   * { box-sizing: border-box; }
+   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+          background: radial-gradient(circle at 50% 35%, #243f58, #09121f 70%);
+          color: #dceaf2; font: 14px/1.5 system-ui, sans-serif; }
+   main { width: min(92vw, 800px); padding: 22px 0 28px; }
+   header { display: flex; justify-content: space-between; align-items: baseline;
+            margin-bottom: 12px; gap: 16px; }
+   h1 { margin: 0; font-size: clamp(18px, 3vw, 28px); font-weight: 600;
+        letter-spacing: .04em; }
+   .tag { color: #77d9e7; letter-spacing: .16em; text-transform: uppercase;
+          font-size: 11px; white-space: nowrap; }
+   canvas { display: block; width: 100%; height: auto; border: 1px solid #446179;
+            border-radius: 16px; box-shadow: 0 24px 70px #0008; }
+   footer { display: flex; justify-content: space-between; gap: 18px; margin-top: 12px;
+            color: #9eb5c4; font-size: 12px; }
+   @media (max-width: 550px) { footer, header { flex-wrap: wrap; } }
+</style>
+<body>
+<main>
+   <header><h1>Optical Inspection</h1><span class="tag">Quadric ray tracing</span></header>
+   <canvas id=canvas width=800 height=800 aria-label="Robot arm positions a glass lens in front of a specimen"></canvas>
+   <footer><span>Move the pointer to position the glass lens over the specimen.</span>
+           <span>Air → glass → air</span></footer>
+</main>
+<script src=webgl.js></script>
+<script>
+
+// Track the user's cursor
+
+let cursor = [0,0,0];
+let setCursor = (e, z) => {
+   let r = canvas.getBoundingClientRect();
+   cursor = [ (e.clientX - r.left) / r.width * 2 - 1,
+              1 - (e.clientY - r.top) / r.height * 2,
+              z ?? cursor[2] ];
+};
+canvas.onmousedown = e => setCursor(e, 1);
+canvas.onmousemove = e => setCursor(e,  );
+canvas.onmouseup   = e => setCursor(e, 0);
+
+// Convenient vector functions
+
+let normalize = v => {
+   let s = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+   return [ v[0] / s, v[1] / s, v[2] / s ];
+}
+
+// Define a Matrix object
+
+let Matrix = function() {
+   let m;
+   let xyz = (x,y,z) => x === undefined ? [1,1,1] : Array.isArray(x) ? x : [x, y ?? x, z ?? x];
+   let mxm = (a, b) => a.map((A,n) => a[n&3]*b[n&12] + a[n&3|4]*b[n&12|1] + a[n&3|8]*b[n&12|2] + a[n&3|12]*b[n&12|3]);
+   let C = t => Math.cos(t), S = t => Math.sin(t);
+
+   this.get = () => m;
+   this.identity = ()    => m = [ 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 ];
+   this.inverse = () => {
+      let co = (c, r) => {
+         let s = (i, j) => m[c+i & 3 | (r+j & 3) << 2];
+         return (c+r & 1 ? -1 : 1) * ( (s(1,1) * (s(2,2) * s(3,3) - s(3,2) * s(2,3)))
+                                     - (s(2,1) * (s(1,2) * s(3,3) - s(3,2) * s(1,3)))
+                                     + (s(3,1) * (s(1,2) * s(2,3) - s(2,2) * s(1,3))) );
+      }
+      let d = [], e = 0;
+      for (let n = 0 ; n < 16 ; n++) d.push(co(n >> 2, n & 3));
+      for (let n = 0 ; n <  4 ; n++) e += m[n] * d[n << 2];
+      for (let n = 0 ; n < 16 ; n++) m[n] = d[n] / e;
+   }
+   this.move  = (x,y,z)  => { [x,y,z] = xyz(x,y,z); m = mxm(m, [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]); }
+   this.perspective = fl => m = mxm(m, [1,0,0,0, 0,1,0,0, 0,0,1,-1/fl, 0,0,0,1]);
+   this.scale = (x,y,z)  => { [x,y,z] = xyz(x,y,z); m = mxm(m, [x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1]); }
+   this.turnX = t        => m = mxm(m, [1,0,0,0, 0,C(t),S(t),0, 0,-S(t),C(t),0, 0,0,0,1]);
+   this.turnY = t        => m = mxm(m, [C(t),0,-S(t),0, 0,1,0,0, S(t),0,C(t),0, 0,0,0,1]);
+   this.turnZ = t        => m = mxm(m, [C(t),S(t),0,0, -S(t),C(t),0,0, 0,0,1,0, 0,0,0,1]);
+}
+
+// Robot, two gripper fingers, target, refractive glass, and display pedestal.
+
+const NS = 13;
+const NL = 2;
+const GLASS = 10;
+
+function Scene() {
+
+   this.vertexShader = `#version 300 es
+   in  vec3 aPos;
+   out vec3 vPos;
+   void main() {
+      gl_Position = vec4(aPos, 1.);
+      vPos = aPos;
+   }`;
+
+   this.fragmentShader = `#version 300 es
+   precision highp float;
+
+   uniform mat4 uSM[` + NS + `]; // Inverse object transforms.
+   uniform int  uType[` + NS + `]; // 0: sphere/ellipsoid, 1: capped cylinder.
+   uniform vec3 uSA[` + NS + `], uSD[` + NS + `];
+   uniform vec4 uSS[` + NS + `];
+   uniform vec3 uLG[` + NL + `], uLC[` + NL + `];
+   uniform vec2 uLens;
+   in vec3 vPos;
+   out vec4 fragColor;
+
+   const float FAR = 10000.;
+   const float EPS = .001;
+   const int GLASS = ` + GLASS + `;
+   const mat4 SPHERE = mat4(1.,0.,0.,0., 0.,1.,0.,0.,
+                            0.,0.,1.,0., 0.,0.,0.,-1.);
+   const mat4 TUBE = mat4(1.,0.,0.,0., 0.,1.,0.,0.,
+                          0.,0.,0.,0., 0.,0.,0.,-1.);
+   const mat4 SLAB = mat4(0.,0.,0.,0., 0.,0.,0.,0.,
+                          0.,0.,1.,0., 0.,0.,0.,-1.);
+
+   mat4 transformQuadric(mat4 Q, mat4 MI) {
+      return transpose(MI) * Q * MI;
+   }
+
+   // Return the interval where the ray lies inside p^T Q p <= 0.
+   // Linear and constant cases occur for rays parallel to a slab or tube.
+   vec2 rayQuadric(vec3 V, vec3 W, mat4 Q) {
+      vec4 v = vec4(V, 1.), w = vec4(W, 0.);
+      float A = dot(w, Q * w);
+      float B = dot(v, Q * w) + dot(w, Q * v);
+      float C = dot(v, Q * v);
+      if (abs(A) < 1.e-7) {
+         if (abs(B) < 1.e-7)
+            return C <= 0. ? vec2(-FAR, FAR) : vec2(FAR, -FAR);
+         float t = -C / B;
+         return B > 0. ? vec2(-FAR, t) : vec2(t, FAR);
+      }
+      float D = B * B - 4. * A * C;
+      if (D < 0.) return vec2(FAR, -FAR);
+      float s = sqrt(D);
+      return vec2((-B - s) / (2. * A), (-B + s) / (2. * A));
+   }
+
+   vec3 quadricNormal(vec3 P, mat4 Q) {
+      return normalize(((Q + transpose(Q)) * vec4(P, 1.)).xyz);
+   }
+
+   // The cylinder is the intersection of a tube and a slab.
+   vec4 rayShape(vec3 V, vec3 W, int i) {
+      mat4 tubeOrSphere = transformQuadric(uType[i] == 1 ? TUBE : SPHERE, uSM[i]);
+      vec2 a = rayQuadric(V, W, tubeOrSphere);
+      vec2 b = uType[i] == 1
+             ? rayQuadric(V, W, transformQuadric(SLAB, uSM[i]))
+             : vec2(-FAR, FAR);
+      float enter = max(a.x, b.x), leave = min(a.y, b.y);
+      if (enter > leave || leave < EPS) return vec4(0., 0., 0., FAR);
+      bool entering = enter > EPS;
+      float t = entering ? enter : leave;
+      bool useTube = entering ? a.x >= b.x : a.y <= b.y;
+      mat4 surface = useTube ? tubeOrSphere : transformQuadric(SLAB, uSM[i]);
+      return vec4(quadricNormal(V + t * W, surface), t);
+   }
+
+   vec3 lighting(int i, vec3 P, vec3 N, vec3 W, bool castShadow) {
+      vec3 color = uSA[i];
+      for (int j = 0; j < ` + NL + `; j++) {
+         vec3 L = uLG[j];
+         if (dot(N, L) <= 0.) continue;
+         bool shadow = false;
+         if (castShadow) {
+            vec3 origin = P + EPS * L;
+            for (int k = 0; k < ` + NS + `; k++)
+               if (k != GLASS && rayShape(origin, L, k).w < FAR) shadow = true;
+         }
+         if (!shadow) {
+            vec3 R = reflect(-L, N);
+            color += uLC[j] * (.8 * dot(N, L) * uSD[i]
+                   + pow(max(0., dot(-W, R)), uSS[i].a) * uSS[i].rgb);
+         }
+      }
+      return color;
+   }
+
+   void main() {
+      vec3 V = vec3(0.), W = normalize(vec3(vPos.xy, -3.));
+      float nearest = FAR;
+      int hit = -1;
+      vec3 N = vec3(0.);
+      for (int i = 0; i < ` + NS + `; i++) {
+         vec4 h = rayShape(V, W, i);
+         if (h.w < nearest) { nearest = h.w; hit = i; N = h.xyz; }
+      }
+      vec3 color = mix(vec3(.012,.027,.043), vec3(.065,.12,.16),
+                       clamp((vPos.y + 1.) * .5, 0., 1.));
+      float glow = exp(-14. * length(vPos.xy - uLens));
+      color += glow * vec3(.035,.006,.017);
+      if (hit >= 0) {
+         vec3 P = V + nearest * W;
+         if (hit == GLASS) {
+            // Snell's law at entry, second sphere root at exit, then glass to air.
+            mat4 Q = transformQuadric(SPHERE, uSM[GLASS]);
+            vec3 insideW = refract(W, N, 1. / 1.5);
+            vec3 insideV = P + EPS * insideW;
+            float exitT = rayQuadric(insideV, insideW, Q).y;
+            vec3 exitP = insideV + exitT * insideW;
+            vec3 exitN = quadricNormal(exitP, Q);
+            vec3 outsideW = refract(insideW, -exitN, 1.5);
+            vec3 outsideV = exitP + EPS * outsideW;
+            float refractedT = FAR;
+            int refractedHit = -1;
+            vec3 refractedN = vec3(0.);
+            if (length(outsideW) > .1) {
+               for (int i = 0; i < ` + NS + `; i++) {
+                  if (i == GLASS) continue;
+                  vec4 h = rayShape(outsideV, outsideW, i);
+                  if (h.w < refractedT) {
+                     refractedT = h.w; refractedHit = i; refractedN = h.xyz;
+                  }
+               }
+            }
+            vec3 through = vec3(.025,.06,.085);
+            if (refractedHit >= 0)
+               through = lighting(refractedHit,
+                         outsideV + refractedT * outsideW,
+                         refractedN, outsideW, true);
+            float fresnel = .04 + .96 * pow(1. - max(0.,dot(-W,N)), 5.);
+            vec3 sheen = vec3(.18,.42,.55);
+            for (int j = 0; j < ` + NL + `; j++)
+               sheen += .8 * pow(max(0.,dot(reflect(-uLG[j],N),-W)),70.) * uLC[j];
+            color = mix(through * vec3(.84,.96,1.) + vec3(.015,.04,.06),
+                        sheen, fresnel);
+         }
+         else color = lighting(hit, P, N, W, true);
+         vec3 Wr = reflect(W, N), Vr = P + EPS * Wr;
+         float reflectedT = FAR;
+         int reflectedHit = -1;
+         vec3 reflectedN = vec3(0.);
+         for (int i = 0; i < ` + NS + `; i++) {
+            vec4 h = rayShape(Vr, Wr, i);
+            if (h.w < reflectedT) {
+               reflectedT = h.w; reflectedHit = i; reflectedN = h.xyz;
+            }
+         }
+         if (reflectedHit >= 0)
+            color += (hit == GLASS ? .12 : .2) * lighting(reflectedHit,
+                         Vr + reflectedT * Wr, reflectedN, Wr, false);
+      }
+      fragColor = vec4(sqrt(max(color, vec3(0.))), 1.);
+   }`;
+
+   const materials = [
+      [[.018,.027,.032],[.10,.18,.2],[.55,.8,.85,75.]], // base
+      [[.055,.067,.07],[.42,.56,.6],[.9,1.,1.,95.]],    // shoulder
+      [[.014,.09,.11],[.04,.64,.7],[.55,1.,1.,85.]],   // upper arm
+      [[.055,.067,.07],[.42,.56,.6],[.9,1.,1.,95.]],    // elbow
+      [[.014,.09,.11],[.04,.64,.7],[.55,1.,1.,85.]],   // forearm
+      [[.055,.067,.07],[.42,.56,.6],[.9,1.,1.,95.]],    // wrist
+      [[.09,.045,.01],[.9,.35,.07],[1.,.8,.35,85.]],    // hand
+      [[.09,.045,.01],[.9,.35,.07],[1.,.8,.35,85.]],    // fingers
+      [[.09,.045,.01],[.9,.35,.07],[1.,.8,.35,85.]],
+      [[.19,.025,.034],[1.,.12,.2],[1.,.65,.65,90.]], // specimen
+      [[.025,.065,.08],[.18,.4,.48],[1.,1.,1.,100.]],  // glass
+      [[.018,.027,.032],[.10,.18,.2],[.55,.8,.85,75.]],// specimen stand
+      [[.035,.06,.07],[.28,.47,.5],[.7,1.,1.,80.]]     // stand stem
+   ];
+   let startTime = Date.now() / 1000;
+   this.update = () => {
+      let time = Date.now() / 1000 - startTime;
+      materials[9][0] = [.17 + .06 * (1 + Math.sin(time * 2.)), .02, .035];
+      setUniform('3fv', 'uSA[0]', materials.flatMap(m => m[0]));
+      setUniform('3fv', 'uSD[0]', materials.flatMap(m => m[1]));
+      setUniform('4fv', 'uSS[0]', materials.flatMap(m => m[2]));
+      setUniform('3fv', 'uLG[0]', [[-2,3,3],[2,1,1]].map(normalize).flat());
+      setUniform('3fv', 'uLC[0]', [1.,.96,.85, .36,.68,.86]);
+      let shoulder = [-.48,-.57,-3.08];
+      let target = [.57,.12,-3.7];
+      let lens = [.57 + .08 * cursor[0] + .018 * Math.sin(time * .55),
+                  .12 + .08 * cursor[1], -3.08];
+      // Two-link inverse kinematics places the gripper on the near side
+      // of the moving lens. The red specimen stays fixed behind it.
+      let wristGoal = [lens[0] - .31 - .25, lens[1], shoulder[2]];
+      let dx = wristGoal[0] - shoulder[0], dy = wristGoal[1] - shoulder[1];
+      let distance = Math.hypot(dx, dy), upper = .58, lower = .4;
+      let baseAngle = Math.atan2(dx, dy);
+      let offset = Math.acos(Math.max(-1, Math.min(1,
+         (distance * distance + upper * upper - lower * lower) /
+         (2 * distance * upper))));
+      let a = baseAngle - offset;
+      let elbow = [shoulder[0] + upper * Math.sin(a),
+                   shoulder[1] + upper * Math.cos(a), shoulder[2]];
+      let wrist = wristGoal;
+      let tip = [wrist[0] + .08, wrist[1], wrist[2]];
+      let transforms = [];
+      let types = [1,0,1,0,1,0,0,0,0,0,0,1,1];
+      let m = new Matrix();
+      let add = (position, scale, rotation = 0, cylinder = false) => {
+         m.identity();
+         m.move(position);
+         if (cylinder) {
+            m.turnZ(rotation);
+            m.turnX(-Math.PI / 2);
+         }
+         m.scale(scale);
+         m.inverse();
+         transforms.push(...m.get());
+      };
+      let segment = (p, q, radius) => {
+         let dx = q[0]-p[0], dy = q[1]-p[1];
+         add([(p[0]+q[0])/2,(p[1]+q[1])/2,(p[2]+q[2])/2],
+             [radius,radius,Math.hypot(dx,dy)/2], Math.atan2(-dx,dy), true);
+      };
+      add([-.48,-.73,-3.08],[.27,.27,.055],0,true);
+      add(shoulder,[.105,.105,.105]);
+      segment(shoulder,elbow,.058);
+      add(elbow,[.085,.085,.085]);
+      segment(elbow,wrist,.052);
+      add(wrist,[.077,.077,.077]);
+      add(tip,[.075,.08,.065]);
+      add([tip[0]+.08,tip[1]-.07,tip[2]],[.09,.024,.035]);
+      add([tip[0]+.08,tip[1]+.07,tip[2]],[.09,.024,.035]);
+      add(target,[.07,.07,.07]);
+      add(lens,[.31,.31,.31]);
+      add([.57,-.73,-3.7],[.22,.22,.05],0,true);
+      add([.57,-.35,-3.7],[.026,.026,.4],0,true);
+      setUniform('Matrix4fv', 'uSM[0]', false, transforms);
+      gl.uniform1iv(gl.getUniformLocation(gl.program,'uType[0]'), types);
+      setUniform('2fv', 'uLens', [lens[0] * 3 / 3.08, lens[1] * 3 / 3.08]);
+   };
+}
+
+gl_start(canvas, new Scene());
+</script>
+</body>
+</html>

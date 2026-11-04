@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Celestial Clockwork · HW06</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080f19;color:#f1e4ca;font-family:system-ui,sans-serif}main{max-width:1200px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #cfb07830;padding-bottom:18px}h1{font:normal 30px Georgia,serif;letter-spacing:1px;margin:0}.subtitle{color:#a4b0c2;font-size:12px;margin:8px 0 0}.badge{color:#bb9865;font-size:11px;letter-spacing:2px}.stage{position:relative;max-width:800px;margin:auto}canvas{display:block;width:100%;aspect-ratio:1;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}.hint{position:absolute;bottom:14px;width:100%;text-align:center;font-size:10px;letter-spacing:2px;color:#77869c;pointer-events:none}footer{display:flex;justify-content:center;align-items:center;gap:22px;flex-wrap:wrap;border-top:1px solid #cfb07830;padding:18px 0;font-size:11px;color:#afbdd0}button{background:#172332;color:#e5d3ad;border:1px solid #58606a;padding:10px 18px;border-radius:4px;cursor:pointer}button:hover{background:#293c50}label{display:flex;align-items:center;gap:10px}input{accent-color:#d6b073;width:110px}.materials{text-align:center;color:#75879d;font-size:11px;letter-spacing:1px;margin:0 0 12px}#error{color:#ffb69d}@media(min-width:900px){.stage{width:min(78vh,800px)}}@media(max-width:600px){main{padding:18px 12px}h1{font-size:26px}.badge{display:none}footer{gap:12px}}
+</style></head><body><main>
+<header><div><h1>Celestial Clockwork</h1><p class="subtitle">An animated orrery · light, materials & independent motion</p></div><span class="badge">COMPUTER GRAPHICS / HW6</span></header>
+<div class="stage"><canvas id="canvas" width="1000" height="1000" aria-label="Animated three-dimensional golden orrery with orbiting planets and moons"></canvas><div class="hint">DRAG TO ROTATE · SCROLL TO ZOOM</div></div>
+<p class="materials">GOLD · COPPER · SILVER · JADE · MIDNIGHT ENAMEL</p>
+<footer><button id="pause" type="button">Pause motion</button><label for="speed">SPEED <input id="speed" type="range" min="0.1" max="2" step="0.1" value="1"><output id="tempo">1.0×</output></label><button id="reset" type="button">Reset view</button></footer><p id="error" role="alert"></p></main>
+<script src="library.js"></script><script src="webgl2.js"></script><script>
+'use strict';
+function Scene() {
+  this.vertexSize = 8;
+  this.vertexAttributes = {aPos:{size:3,position:0},aNor:{size:3,position:3},aUV:{size:2,position:6}};
+  // TO DO FOR HOMEWORK 1 — completed: material coefficients feed the Phong shader.
+  const materials = {
+    gold: {ambient:[.12,.065,.018],diffuse:[.65,.39,.10],specular:[1,.79,.36,72]},
+    brass: {ambient:[.07,.045,.02],diffuse:[.40,.27,.11],specular:[.85,.66,.32,90]},
+    jade: {ambient:[.015,.08,.07],diffuse:[.06,.48,.39],specular:[.72,.95,.87,110]},
+    copper: {ambient:[.10,.035,.018],diffuse:[.65,.23,.11],specular:[1,.59,.35,65]},
+    coral: {ambient:[.09,.025,.024],diffuse:[.64,.17,.16],specular:[.5,.4,.36,24]},
+    silver: {ambient:[.055,.07,.09],diffuse:[.35,.44,.55],specular:[.95,.98,1,140]},
+    midnight: {ambient:[.014,.025,.065],diffuse:[.035,.09,.24],specular:[.5,.7,1,120]},
+    sun: {ambient:[.35,.13,.025],diffuse:[.9,.47,.10],specular:[1,.85,.45,40],emission:[.27,.10,.018]},
+    cyan: {ambient:[.01,.08,.09],diffuse:[.05,.35,.42],specular:[.6,.9,1,60],emission:[.02,.24,.30]},
+    star: {ambient:[.15,.22,.3],diffuse:[0,0,0],specular:[0,0,0,1],emission:[.25,.34,.45]}
+  };
+  // TO DO FOR HOMEWORK 2 — completed: latitude/longitude sphere, normal = position.
+  const createSphere = (nu=48,nv=24) => {
+    const vertices=[];
+    const point=(u,v)=>{const t=2*Math.PI*u,p=Math.PI*v-Math.PI/2;
+      const x=Math.cos(t)*Math.cos(p),y=Math.sin(t)*Math.cos(p),z=Math.sin(p);
+      return [x,y,z,x,y,z,u,v];};
+    for(let j=0;j<nv;j++)for(let i=0;i<nu;i++){
+      const a=point(i/nu,j/nv),b=point((i+1)/nu,j/nv),c=point((i+1)/nu,(j+1)/nv),d=point(i/nu,(j+1)/nv);
+      if(j>0)vertices.push(...a,...b,...c);
+      if(j<nv-1)vertices.push(...a,...c,...d);
+    }return vertices;
+  };
+   let createCylinder = n => {
+      let vertices = [];
+      for (let i = 0 ; i < n ; i++) {
+         let u0 = i / n;
+         let u1 = (i+1) / n;
+	 let x0 = Math.cos(2 * Math.PI * u0);
+	 let y0 = Math.sin(2 * Math.PI * u0);
+	 let x1 = Math.cos(2 * Math.PI * u1);
+	 let y1 = Math.sin(2 * Math.PI * u1);
+	 vertices.push(
+	    x0,y0,-1, x0,y0,0, u0,0,  x0,y0, 1, x0,y0,0, u0,1,  x1,y1, 1, x1,y1,0, u1,1,
+	    x1,y1,-1, x1,y1,0, u1,0,  x0,y0,-1, x0,y0,0, u0,0,  x1,y1, 1, x1,y1,0, u1,1,
+
+	    x0,y0, 1, 0,0, 1, 0,1,   x1,y1, 1, 0,0, 1, 0,1,   0, 0, 1, 0,0, 1, 0,1,
+	    x0,y0,-1, 0,0,-1, 0,0,   x1,y1,-1, 0,0,-1, 0,0,   0, 0,-1, 0,0,-1, 0,0,
+         );
+      }
+      return vertices;
+   }
+
+   let createCube = () => [
+       1,-1, 1,  1,0,0, 0,1,   1, 1,-1,  1,0,0, 1,0,   1,-1,-1,  1,0,0, 0,0,
+       1,-1, 1,  1,0,0, 0,1,   1, 1,-1,  1,0,0, 1,0,   1, 1, 1,  1,0,0, 1,1,
+      -1,-1, 1, -1,0,0, 0,1,  -1, 1,-1, -1,0,0, 1,0,  -1,-1,-1, -1,0,0, 0,0,
+      -1,-1, 1, -1,0,0, 0,1,  -1, 1,-1, -1,0,0, 1,0,  -1, 1, 1, -1,0,0, 1,1,
+
+      -1, 1, 1, 0, 1,0, 0,1,   1, 1,-1, 0, 1,0, 1,0,  -1, 1,-1, 0, 1,0, 0,0,
+      -1, 1, 1, 0, 1,0, 0,1,   1, 1,-1, 0, 1,0, 1,0,   1, 1, 1, 0, 1,0, 1,1,
+      -1,-1, 1, 0,-1,0, 0,1,   1,-1,-1, 0,-1,0, 1,0,  -1,-1,-1, 0,-1,0, 0,0,
+      -1,-1, 1, 0,-1,0, 0,1,   1,-1,-1, 0,-1,0, 1,0,   1,-1, 1, 0,-1,0, 1,1,
+
+      -1, 1, 1, 0,0, 1, 0,1,   1,-1, 1, 0,0, 1, 1,0,  -1,-1, 1, 0,0, 1, 0,0,
+      -1, 1, 1, 0,0, 1, 0,1,   1,-1, 1, 0,0, 1, 1,0,   1, 1, 1, 0,0, 1, 1,1,
+      -1, 1,-1, 0,0,-1, 0,1,   1,-1,-1, 0,0,-1, 1,0,  -1,-1,-1, 0,0,-1, 0,0,
+      -1, 1,-1, 0,0,-1, 0,1,   1,-1,-1, 0,0,-1, 1,0,   1, 1,-1, 0,0,-1, 1,1,
+   ];
+
+
+  // Extra geometry: a torus, also stored as position / normal / UV triangles.
+  const createTorus=(radius,tube,n=128,k=10)=>{
+    const out=[];const p=(u,v)=>{let a=u*2*Math.PI,b=v*2*Math.PI;
+      return [(radius+tube*Math.cos(b))*Math.cos(a),tube*Math.sin(b),(radius+tube*Math.cos(b))*Math.sin(a),Math.cos(b)*Math.cos(a),Math.sin(b),Math.cos(b)*Math.sin(a),u,v];};
+    for(let i=0;i<n;i++)for(let j=0;j<k;j++){
+      const a=p(i/n,j/k),b=p((i+1)/n,j/k),c=p((i+1)/n,(j+1)/k),d=p(i/n,(j+1)/k);out.push(...a,...b,...c,...a,...c,...d);
+    }return out;
+  };
+  this.shapes=[];
+  const sphere=createSphere(),smallSphere=createSphere(16,8),cube=createCube(),cylinder=createCylinder(64);
+  const add=(vertices,material,animate,pattern=0)=>{
+    const shape={vertices,material:materials[material],matrix:new Matrix(),animate,pattern};shape.matrix.identity();this.shapes.push(shape);return shape;
+  };
+  const ring=(r,tilt,spin,material='brass')=>add(createTorus(r,.008),material,(m,t)=>{m.turnY(spin*t);m.turnZ(tilt);});
+  add(sphere,'sun',(m,t)=>{m.turnY(t*.18);m.scale(.19);},1);
+  ring(.255,.35,.13,'gold');ring(.29,-.65,-.10,'copper');
+  const planets=[{r:.38,s:.066,w:.50,p:.4,mat:'jade'}, {r:.55,s:.087,w:.29,p:2.6,mat:'copper'}, {r:.74,s:.108,w:.17,p:4.5,mat:'midnight'}];
+  planets.forEach((p,i)=>{
+    ring(p.r,0,0);
+    const orbit=(m,t)=>{const a=t*p.w+p.p;m.move(p.r*Math.cos(a),0,p.r*Math.sin(a));};
+    add(sphere,p.mat,(m,t)=>{orbit(m,t);m.turnY(t*(.4+i*.13));m.turnZ(.25);m.scale(p.s);},i===2?2:0);
+    if(i===1)add(createTorus(.127,.012),'gold',(m,t)=>{orbit(m,t);m.turnZ(.4);m.turnX(.25);});
+    add(smallSphere,'silver',(m,t)=>{orbit(m,t);m.turnY(t*(1.2+i*.2));m.turnZ(.3);m.move(p.s+.055,0,0);m.scale(.018);});
+  });
+  // Small trailing beads follow each planet, making its orbital motion visible.
+  planets.forEach((p,i)=>{
+    for(let j=1;j<=9;j++)add(smallSphere,i===0?'cyan':i===1?'copper':'silver',(m,t)=>{
+      const a=t*p.w+p.p-j*.055;m.move(p.r*Math.cos(a),0,p.r*Math.sin(a));m.scale(.009*(1-j/12));
+    });
+  });
+  ring(.87,.32,.055,'gold');ring(.88,-.32,-.055,'brass');
+  for(let i=0;i<72;i++)add(cube,i%6===0?'gold':'brass',(m)=>{const a=i*2*Math.PI/72;m.move(.87*Math.cos(a),-.10,.87*Math.sin(a));m.turnY(-a);m.scale(i%6===0?.018:.009,.004,.0025);});
+  add(cylinder,'midnight',m=>{m.move(0,-.43,0);m.turnX(Math.PI/2);m.scale(.34,.34,.035);});
+  add(cylinder,'brass',m=>{m.move(0,-.39,0);m.turnX(Math.PI/2);m.scale(.30,.30,.012);});
+  add(cylinder,'gold',m=>{m.move(0,-.28,0);m.turnX(Math.PI/2);m.scale(.025,.025,.11);});
+  add(createTorus(.33,.006),'gold',m=>{m.move(0,-.40,0);});
+  add(createTorus(.32,.004),'cyan',m=>{m.move(0,-.465,0);});
+  for(let i=0;i<65;i++){
+    const a=i*2.399963,r=.95+.22*((i*17%31)/31),y=(((i*13)%37)/37-.5)*1.6;
+    add(smallSphere,'star',(m,t)=>{m.move(r*Math.cos(a),y,-.6+ .3*Math.sin(a));m.scale((.0018+(i%3)*.0008)*(.8+.2*Math.sin(t+i)));});
+  }
+  this.vertexShader=`#version 300 es
+  in vec3 aPos,aNor; in vec2 aUV;
+  uniform mat4 uMF,uMI;
+  out vec3 vPos,vNor; out vec2 vUV;
+  void main(){
+    vec4 p=uMF*vec4(aPos,1.);
+    vPos=p.xyz; vNor=(vec4(aNor,0.)*uMI).xyz;vUV=aUV;
+    // Projection is separate: normals only use the affine model-view inverse.
+    gl_Position=vec4(p.x,p.y,-p.z*.25,1.-p.z/4.);
+  }`;
+  this.fragmentShader=`#version 300 es
+  precision highp float;
+  in vec3 vPos,vNor;in vec2 vUV;out vec4 fragColor;
+  uniform vec3 uAmbient,uDiffuse,uEmission;
+  uniform vec4 uSpecular;uniform float uPattern;
+  vec3 light(vec3 L,vec3 tint,vec3 N,vec3 V,vec3 diffuse){
+    float d=max(dot(N,L),0.);
+    float s=d>0.?pow(max(dot(reflect(-L,N),V),0.),uSpecular.w):0.;
+    return tint*(diffuse*d+uSpecular.rgb*s);
+  }
+  void main(){
+    vec3 N=normalize(vNor),V=normalize(vec3(0.,0.,4.)-vPos);
+    vec3 diffuse=uDiffuse;
+    if(uPattern>.5&&uPattern<1.5)diffuse*=.88+.12*sin(vUV.y*65.+sin(vUV.x*30.)*2.);
+    if(uPattern>1.5)diffuse*=.78+.22*sin(vUV.y*90.);
+    vec3 color=uAmbient+uEmission;
+    color+=light(normalize(vec3(-.7,.8,1.5)),vec3(1.,.88,.70),N,V,diffuse);
+    color+=light(normalize(vec3(.9,.1,.5)),vec3(.35,.55,.85),N,V,diffuse)*.65;
+    color+=light(normalize(vec3(.1,.6,-1.)),vec3(.65,.75,1.),N,V,diffuse)*.45;
+    fragColor=vec4(pow(max(color,vec3(0.)),vec3(1./2.2)),1.);
+  }`;
+  let time=0,last=performance.now(),paused=false,speed=1,yaw=-.25,pitch=.55,zoom=.88;
+  const canvas=document.getElementById('canvas'),pause=document.getElementById('pause');
+  pause.onclick=()=>{paused=!paused;pause.textContent=paused?'Resume motion':'Pause motion';pause.setAttribute('aria-pressed',String(paused));};
+  document.getElementById('speed').oninput=e=>{speed=+e.target.value;document.getElementById('tempo').value=speed.toFixed(1)+'×';};
+  document.getElementById('reset').onclick=()=>{yaw=-.25;pitch=.55;zoom=.88;};
+  let pointer=null;
+  canvas.onpointerdown=e=>{pointer=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId);};
+  canvas.onpointermove=e=>{if(pointer){yaw+=(e.clientX-pointer[0])*.006;pitch=Math.max(-1.2,Math.min(1.2,pitch+(e.clientY-pointer[1])*.006));pointer=[e.clientX,e.clientY];}};
+  canvas.onpointerup=canvas.onpointercancel=()=>pointer=null;
+  canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.55,Math.min(1.3,zoom*Math.exp(-e.deltaY*.001)));},{passive:false});
+  // TO DO FOR HOMEWORK 3 — completed: every shape owns its own Matrix.
+  // webgl2.js uploads this matrix and its inverse immediately before each draw.
+  this.update=()=>{
+    const now=performance.now();if(!paused)time+=Math.min((now-last)/1000,.05)*speed;last=now;
+    for(const shape of this.shapes){const m=shape.matrix;m.identity();m.scale(zoom);m.turnX(pitch);m.turnY(yaw);shape.animate(m,time);}
+  };
+}
+const scene=new Scene();
+gl_start(document.getElementById('canvas'),scene);
+</script></body></html>
