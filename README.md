@@ -13,3 +13,5 @@ Baosheng Jin · New York University
 - [Assignment 6: Celestial Clockwork](https://Eric-Jinbaosheng.github.io/computer-graphics/hw6/)
 
 Static HTML and JavaScript/WebGL. Open the live site in a browser with WebGL support.
+
+- [Assignment 7: Groove Bot](https://eric-jinbaosheng.github.io/computer-graphics/hw7/) — hierarchical animation with personality buttons and motion sliders.
