@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A Love Letter</title>
+<style>
+  :root { color-scheme: dark; background: #140d14; color: #f5e6e7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 system-ui, sans-serif; }
+  main { width: min(1100px, 100% - 48px); margin: clamp(28px, 6vh, 72px) auto; }
+  h1 { margin: 0; font-family: Baskerville, Georgia, serif; font-size: clamp(34px, 6vw, 60px); font-weight: 600; line-height: 1.15; }
+  header p { color: #c4a9b4; margin: 12px 0 24px; }
+  .stage { position: relative; overflow: hidden; border: 1px solid #4b2938; border-radius: 5px; background: radial-gradient(ellipse at 53% 44%, #482031, #26121f 49%, #120b15 87%); }
+  canvas { display: block; width: 100%; height: clamp(350px, 65vh, 650px); cursor: grab; touch-action: none; }
+  canvas:active { cursor: grabbing; }
+  canvas:focus-visible { outline: 2px solid #ffd1d6; outline-offset: -4px; }
+  #error { position: absolute; inset: 35% 8% auto; text-align: center; color: #ffd1d6; }
+  footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #c4a9b4; padding-top: 14px; }
+  #status { margin: 0; }
+  .about { max-width: 70ch; margin: 24px 0 0; color: #c4a9b4; font-size: 14px; }
+  .credit { color: #b28d9c; font-size: 13px; }
+  #status.near { color: #e8bdc7; }
+  #status.aligned { color: #ffd1d6; }
+  button { border: 1px solid #684250; border-radius: 4px; padding: 6px 13px; background: #2b1822; color: #f5e6e7; font: inherit; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #3c202d; }
+  @media (max-width: 520px) {
+    main { width: calc(100% - 28px); }
+    canvas { height: clamp(320px, 108vw, 475px); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>A Love Letter</h1>
+    <p id="instructions">Drag to find the angle. The letters align automatically when you get close.</p>
+  </header>
+  <div class="stage">
+    <canvas id="canvas" tabindex="0" aria-label="Interactive three-dimensional text scene" aria-describedby="instructions status"></canvas>
+    <p id="error" hidden role="alert"></p>
+  </div>
+  <footer>
+    <p id="status" role="status">You can also use the arrow keys</p>
+    <button id="reset" type="button">Reset view</button>
+  </footer>
+  <p class="about">In A Love Letter, I placed the letters of “I love you” at different depths in a WebGL scene. Dragging changes the viewing angle until the letters line up and the phrase becomes readable. I used the starter code’s Shape.text() with a custom italic font atlas. Once the phrase aligns, six floating hearts burst into sparks that curve behind the text and gather into a single heart-shaped firework.</p>
+  <p class="credit">Baosheng Jin · Computer Graphics HW9</p>
+</main>
+<script>
+/* HW9 starter libraries */
+// DEFINE A MATRIX OBJECT CLASS
+
+let Matrix = function() {
+   let xyz = (x,y,z) => x === undefined ? [1,1,1] : Array.isArray(x) ? x : [x, y ?? x, z ?? x];
+   let mxm = (a, b) => a.map((A,n) => a[n&3]*b[n&12] + a[n&3|4]*b[n&12|1] + a[n&3|8]*b[n&12|2] + a[n&3|12]*b[n&12|3]);
+   let C = t => Math.cos(t), S = t => Math.sin(t);
+
+   // THE CURRENT MATRIX VALUE IS THE TOP ELEMENT OF A STACK
+
+   let m = [ [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] ], top = 0;
+
+   // SET OR GET THE TOP VALUE OF THE STACK
+
+   this.get  = () => m[top].slice();
+   this.set  = _m => { am[top] = _m.slice(); return this; }
+
+   // PUSH OR POP A MATRIX TO/FROM THE STACK
+
+   this.push = () => { m[top+1] = m[top].slice(); top++; return this; }
+   this.pop  = () => { --top; return this; }
+
+   this.identity = ()    => { m[top] = [ 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 ]; return this; }
+   this.inverse = () => {
+      let co = (c, r) => {
+         let s = (i, j) => m[top][c+i & 3 | (r+j & 3) << 2];
+         return (c+r & 1 ? -1 : 1) * ( (s(1,1) * (s(2,2) * s(3,3) - s(3,2) * s(2,3)))
+                                     - (s(2,1) * (s(1,2) * s(3,3) - s(3,2) * s(1,3)))
+                                     + (s(3,1) * (s(1,2) * s(2,3) - s(2,2) * s(1,3))) );
+      }
+      let d = [], e = 0;
+      for (let n = 0 ; n < 16 ; n++) d.push(co(n >> 2, n & 3));
+      for (let n = 0 ; n <  4 ; n++) e += m[top][n] * d[n << 2];
+      for (let n = 0 ; n < 16 ; n++) m[top][n] = d[n] / e;
+      return this;
+   }
+   this.move  = (x,y,z)  => { [x,y,z] = xyz(x,y,z); m[top] = mxm(m[top], [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]); return this; }
+   this.perspective = fl => { m[top] = mxm(m[top], [1,0,0,0, 0,1,0,0, 0,0,1,-1/fl, 0,0,0,1]); return this; }
+   this.scale = (x,y,z)  => { [x,y,z] = xyz(x,y,z); m[top] = mxm(m[top], [x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1]); return this; }
+   this.turnX = t        => { m[top] = mxm(m[top], [1,0,0,0, 0,C(t),S(t),0, 0,-S(t),C(t),0, 0,0,0,1]); return this; }
+   this.turnY = t        => { m[top] = mxm(m[top], [C(t),0,-S(t),0, 0,1,0,0, S(t),0,C(t),0, 0,0,0,1]); return this; }
+   this.turnZ = t        => { m[top] = mxm(m[top], [C(t),S(t),0,0, -S(t),C(t),0,0, 0,0,1,0, 0,0,0,1]); return this; }
+
+   this.draw = (shape, material, textureID) => { draw(shape, material, this, textureID); return this; }
+}
+
+// USEFUL MATH FUNCTIONS
+
+let dot = (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+
+let ik = (a,b,C,D) => {
+   let cc = dot(C,C), x = (1 + (a*a - b*b)/cc) / 2, y = dot(C,D)/cc;
+   for (let i = 0 ; i < 3 ; i++) D[i] -= y * C[i];
+   y = Math.sqrt(Math.max(0,a*a - cc*x*x) / dot(D,D));
+   for (let i = 0 ; i < 3 ; i++) D[i] = x * C[i] + y * D[i];
+   return D;
+}
+
+let normalize = v => { let s = Math.sqrt(dot(v,v)); return v.map(a => a/s); }
+
+let noise = (x,y,z) => {
+   let c = Math.cos,floor = Math.floor;
+   let r = (x,y,z) => c(5 * (x + 5 * c(5 * (y + 5 * c(5 * (z + 5 * c(5 * x)))))));
+   let s = (x,y,z) => normalize([ r(x,y,z), r(y,z,x), r(z,x,y) ]);
+   let i = floor(x), j = floor(y), k = floor(z), u = x-i, v = y-j, w = z-k;
+   let t = (x,y,z) => dot( s(i+x, j+y, k+z), [u-x, v-y, w-z] );
+   let e = (f,a,b) => a + (b - a) * (f < .5 ? 2*f*f : 2*f*(2-f)-1);
+   return e(w, e(v, e(u, t(0,0,0), t(1,0,0)), e(u, t(0,1,0), t(1,1,0))),
+               e(v, e(u, t(0,0,1), t(1,0,1)), e(u, t(0,1,1), t(1,1,1))));
+}
+
+
+let Shape = {
+
+   sphere : (m,n) => {
+      let p = (u,v) => {
+	 let theta = 2 * Math.PI * u;
+	 let phi = Math.PI * v - Math.PI/2;
+	 let x = Math.cos(theta) * Math.cos(phi), y = Math.sin(theta) * Math.cos(phi), z = Math.sin(phi);
+	 return [ x,y,z, x,y,z, u,v ];
+      }
+      let vertices = [];
+      for (let i = 0 ; i < m ; i++)
+      for (let j = 0 ; j < n ; j++) {
+         let u0 = i / m, u1 = (i+1) / m;
+         let v0 = j / n, v1 = (j+1) / n;
+
+	 vertices.push(p(u0,v0));
+	 vertices.push(p(u1,v0));
+	 vertices.push(p(u0,v1));
+
+	 vertices.push(p(u0,v1));
+	 vertices.push(p(u1,v0));
+	 vertices.push(p(u1,v1));
+      }
+      return new Float32Array(vertices.flat());
+   },
+
+   cylinder : n => {
+      let vertices = [];
+      for (let i = 0 ; i < n ; i++) {
+         let u0 = i / n;
+         let u1 = (i+1) / n;
+	 let x0 = Math.cos(2 * Math.PI * u0);
+	 let y0 = Math.sin(2 * Math.PI * u0);
+	 let x1 = Math.cos(2 * Math.PI * u1);
+	 let y1 = Math.sin(2 * Math.PI * u1);
+	 vertices.push(
+	    x0,y0,1,  0,0,1,   u0,1,   x1,y1,1, 0,0,1,   u1,1,  0,0,1,    0,0,1,   u0,0,
+
+	    x0,y0,-1, x0,y0,0, u0,0,  x0,y0, 1, x0,y0,0, u0,1,  x1,y1, 1, x1,y1,0, u1,1,
+	    x1,y1,-1, x1,y1,0, u1,0,  x0,y0,-1, x0,y0,0, u0,0,  x1,y1, 1, x1,y1,0, u1,1,
+
+	    x0,y0,-1, 0,0,-1,  u1,0,  x1,y1,-1, 0,0,-1, u1,0,   0,0,-1,   0,0,-1,  u1,1,
+         );
+      }
+      return new Float32Array(vertices);
+   },
+
+   cube : () => new Float32Array([
+       1,-1, 1,  1,0,0, 0,1,   1, 1,-1,  1,0,0, 1,0,   1,-1,-1,  1,0,0, 0,0,
+       1,-1, 1,  1,0,0, 0,1,   1, 1,-1,  1,0,0, 1,0,   1, 1, 1,  1,0,0, 1,1,
+      -1,-1, 1, -1,0,0, 0,1,  -1, 1,-1, -1,0,0, 1,0,  -1,-1,-1, -1,0,0, 0,0,
+      -1,-1, 1, -1,0,0, 0,1,  -1, 1,-1, -1,0,0, 1,0,  -1, 1, 1, -1,0,0, 1,1,
+
+      -1, 1, 1, 0, 1,0, 0,1,   1, 1,-1, 0, 1,0, 1,0,  -1, 1,-1, 0, 1,0, 0,0,
+      -1, 1, 1, 0, 1,0, 0,1,   1, 1,-1, 0, 1,0, 1,0,   1, 1, 1, 0, 1,0, 1,1,
+      -1,-1, 1, 0,-1,0, 0,1,   1,-1,-1, 0,-1,0, 1,0,  -1,-1,-1, 0,-1,0, 0,0,
+      -1,-1, 1, 0,-1,0, 0,1,   1,-1,-1, 0,-1,0, 1,0,   1,-1, 1, 0,-1,0, 1,1,
+
+      -1, 1, 1, 0,0, 1, 0,1,   1,-1, 1, 0,0, 1, 1,0,  -1,-1, 1, 0,0, 1, 0,0,
+      -1, 1, 1, 0,0, 1, 0,1,   1,-1, 1, 0,0, 1, 1,0,   1, 1, 1, 0,0, 1, 1,1,
+      -1, 1,-1, 0,0,-1, 0,1,   1,-1,-1, 0,0,-1, 1,0,  -1,-1,-1, 0,0,-1, 0,0,
+      -1, 1,-1, 0,0,-1, 0,1,   1,-1,-1, 0,0,-1, 1,0,   1, 1,-1, 0,0,-1, 1,1,
+   ]),
+
+   text : str => {
+      let char = (c, i) => {
+         let u0 = ((c-32) % 12     ) / 12 + .007, u1 = u0 + 1 / 12 * .81;
+         let v0 = ((c-32) / 12 >> 0) /  8       , v1 = v0 + 1 /  8;
+         return [ i,1,0, 0,0,1, u0,v0,  i+1,-1,0, 0,0,1, u1,v1,  i  ,-1,0, 0,0,1, u0,v1,
+                  i,1,0, 0,0,1, u0,v0,  i+1,-1,0, 0,0,1, u1,v1,  i+1, 1,0, 0,0,1, u1,v0 ];
+      }
+      let mesh = [];
+      for (let i = 0 ; i < str.length ; i++)
+         mesh.push(char(str.charCodeAt(i), i));
+      return new Float32Array(mesh.flat());
+   },
+}
+
+
+function gl_start(canvas, scene) {
+   let defineNoise = fs => {           // KP: DEFINE NOISE FUNCTION WITHIN A FRAGMENT SHADER.
+      let i = fs.indexOf(';') + 1;
+      return fs.substring(0,i)+'vec3 _s(vec3 i){return cos(5.*(i+5.*cos(5.*(i.yzx+5.*cos(5.*(i.zxy+5.*cos(5.*i)))))));}float _t(vec3 i,vec3 u,vec3 a){return dot(normalize(_s(i+a)),u-a);}float noise(vec3 p){vec3 i=floor(p),u=p-i,v=2.*mix(u*u,u*(2.-u)-.5,step(.5,u));return mix(mix(mix(_t(i,u,vec3(0)),_t(i,u,vec3(1,0,0)),v.x),mix(_t(i,u,vec3(0,1,0)),_t(i,u,vec3(1,1,0)),v.x),v.y),mix(mix(_t(i,u,vec3(0,0,1)),_t(i,u,vec3(1,0,1)),v.x),mix(_t(i,u,vec3(0,1,1)),_t(i,u,vec3(1)),v.x),v.y),v.z);}'+fs.substring(i);
+   }
+   setTimeout(function() {
+      window.gl = canvas.getContext('webgl2');
+      gl.program = gl.createProgram();
+      let addshader = (type, src) => {
+         let shader = gl.createShader(type);
+         gl.shaderSource(shader, src);
+         gl.compileShader(shader);
+         if (! gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+            console.log('Cannot compile shader:', gl.getShaderInfoLog(shader));
+         gl.attachShader(gl.program, shader);
+      };
+      addshader(gl.VERTEX_SHADER  , scene.vertexShader);
+      addshader(gl.FRAGMENT_SHADER, defineNoise(scene.fragmentShader));
+      gl.linkProgram(gl.program);
+      if (! gl.getProgramParameter(gl.program, gl.LINK_STATUS))
+         console.log('Could not link the shader program!');
+      gl.useProgram(gl.program);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthFunc(gl.LEQUAL);
+
+      let bpe = Float32Array.BYTES_PER_ELEMENT;
+
+      let setVertexAttribute = (name, size, position) => {
+         let location = gl.getAttribLocation(gl.program, name);
+         gl.enableVertexAttribArray(location);
+         gl.vertexAttribPointer(location, size, gl.FLOAT, false, scene.vertexSize * bpe, position * bpe);
+      }
+
+      gl.vertexSize = scene.vertexSize;
+      for (let name in scene.vertexAttributes) {
+         let attribute = scene.vertexAttributes[name];
+         setVertexAttribute(name, attribute.size, attribute.position);
+      }
+
+      let m = new Matrix();
+      if (scene.init)
+         scene.init();
+      requestAnimationFrame(function frame() {
+         if (scene.update)
+            scene.update();
+         requestAnimationFrame(frame);
+      });
+   }, 100);
+}
+
+let loadTexture = (index, fileName, onReady) => {
+   let image = new Image();
+   image.onload = function() {
+      try {
+         gl.activeTexture (gl.TEXTURE0 + index);
+         gl.bindTexture   (gl.TEXTURE_2D, gl.createTexture());
+         gl.texImage2D    (gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+         gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+         gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+         gl.generateMipmap(gl.TEXTURE_2D);
+         onReady?.();
+      }
+      catch (e) { console.log(e); }
+   }
+   image.src = fileName;
+}
+
+let draw = (mesh, material, matrix, textureIndex = -1) => {
+
+   // SET THE FORWARD AND INVERSE MATRICES
+
+   setUniform('Matrix4fv', 'uMF', false, matrix.get());
+   matrix.push().inverse();
+   setUniform('Matrix4fv', 'uMI', false, matrix.get());
+   matrix.pop();
+
+   // SET THE PHONG PARAMETERS FOR THIS MATERIAL
+
+   setUniform('3fv', 'uAmbient' , material.ambient);
+   setUniform('3fv', 'uDiffuse' , material.diffuse);
+   setUniform('4fv', 'uSpecular', material.specular);
+
+   // SET THE TEXTURE INDEX
+
+   setUniform('1i', 'uTexture', textureIndex);
+
+   // RENDER THE MESH
+
+   gl.bufferData(gl.ARRAY_BUFFER, mesh, gl.STATIC_DRAW);
+   gl.drawArrays(gl.TRIANGLES, 0, mesh.length / gl.vertexSize);
+}
+let setUniform = (type,name,a,b,c) => (gl['uniform'+type])(gl.getUniformLocation(gl.program,name), a,b,c);
+
+
+const canvas = document.getElementById('canvas');
+const statusLabel = document.getElementById('status');
+const errorLabel = document.getElementById('error');
+const resetButton = document.getElementById('reset');
+const initialYaw = 0.53;
+const initialPitch = 0.16;
+const snapAngle = 0.12;
+const rearmAngle = 0.18;
+const snapDuration = 125;
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+let yaw = initialYaw;
+let pitch = initialPitch;
+let aligned = false;
+let celebrationStart = -Infinity;
+let needsRender = true;
+let snapFrame = 0;
+let activePointer = null;
+let gestureLatched = false;
+let autoSnapArmed = true;
+let lastX;
+let lastY;
+
+function updateView(nextYaw, nextPitch) {
+  yaw = nextYaw;
+  pitch = nextPitch;
+  needsRender = true;
+  const nowAligned = yaw === 0 && pitch === 0;
+  if (nowAligned !== aligned) {
+    aligned = nowAligned;
+    if (aligned) celebrationStart = performance.now();
+  }
+  const angle = Math.hypot(yaw, pitch);
+  if (angle >= rearmAngle) autoSnapArmed = true;
+  const near = !aligned && angle < 0.25;
+  const status = aligned ? 'Aligned. Rotate away and back to replay.'
+    : near ? 'Almost aligned. Keep moving.' : 'You can also use the arrow keys';
+  if (statusLabel.textContent !== status) statusLabel.textContent = status;
+  statusLabel.classList.toggle('near', near);
+  statusLabel.classList.toggle('aligned', aligned);
+}
+
+function cancelSnap() {
+  cancelAnimationFrame(snapFrame);
+  snapFrame = 0;
+}
+
+function snapView() {
+  if (aligned) return;
+  if (reducedMotion.matches) {
+    updateView(0, 0);
+    return;
+  }
+
+  const startYaw = yaw;
+  const startPitch = pitch;
+  const startTime = performance.now();
+  function easeToAlignment(now) {
+    const progress = Math.min(1, (now - startTime) / snapDuration);
+    const remaining = (1 - progress) ** 3;
+    updateView(startYaw * remaining, startPitch * remaining);
+    snapFrame = progress < 1 ? requestAnimationFrame(easeToAlignment) : 0;
+  }
+  snapFrame = requestAnimationFrame(easeToAlignment);
+}
+
+function rotateView(nextYaw, nextPitch) {
+  nextYaw = Math.max(-0.8, Math.min(0.8, nextYaw));
+  nextPitch = Math.max(-0.44, Math.min(0.44, nextPitch));
+  if (autoSnapArmed) {
+    // Check the whole move so a quick drag can pass through the target.
+    const dx = nextYaw - yaw;
+    const dy = nextPitch - pitch;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared > 0) {
+      const closest = Math.max(0, Math.min(1, -(yaw * dx + pitch * dy) / lengthSquared));
+      const nearYaw = yaw + closest * dx;
+      const nearPitch = pitch + closest * dy;
+      if (Math.hypot(nearYaw, nearPitch) <= snapAngle) {
+        autoSnapArmed = false;
+        updateView(nearYaw, nearPitch);
+        snapView();
+        return true;
+      }
+    }
+  }
+  updateView(nextYaw, nextPitch);
+  return false;
+}
+
+canvas.addEventListener('pointerdown', event => {
+  if (activePointer !== null || event.button !== 0) return;
+  activePointer = event.pointerId;
+  gestureLatched = false;
+  lastX = event.clientX;
+  lastY = event.clientY;
+  canvas.setPointerCapture(activePointer);
+});
+
+canvas.addEventListener('pointermove', event => {
+  if (event.pointerId !== activePointer) return;
+  const sensitivity = 2.3 / Math.min(canvas.clientWidth, canvas.clientHeight);
+  if (!gestureLatched && !snapFrame) {
+    gestureLatched = rotateView(yaw + (event.clientX - lastX) * sensitivity,
+                                pitch + (event.clientY - lastY) * sensitivity);
+  }
+  lastX = event.clientX;
+  lastY = event.clientY;
+});
+
+canvas.addEventListener('pointerup', event => {
+  if (event.pointerId !== activePointer) return;
+  activePointer = null;
+});
+
+canvas.addEventListener('lostpointercapture', event => {
+  if (event.pointerId === activePointer) activePointer = null;
+});
+
+const arrowSteps = {
+  ArrowLeft: [-0.04, 0], ArrowRight: [0.04, 0],
+  ArrowUp: [0, -0.04], ArrowDown: [0, 0.04],
+};
+
+canvas.addEventListener('keydown', event => {
+  const step = arrowSteps[event.key];
+  if (!Array.isArray(step)) return;
+  event.preventDefault();
+  if (!snapFrame) rotateView(yaw + step[0], pitch + step[1]);
+});
+
+resetButton.addEventListener('click', () => {
+  cancelSnap();
+  gestureLatched = false;
+  updateView(initialYaw, initialPitch);
+  canvas.focus();
+});
+
+function makeLetterAtlas(phrase) {
+  // Match the atlas coordinates used by the HW9 Shape.text() primitive.
+  const cellWidth = 128;
+  const cellHeight = 192;
+  const cropWidth = cellWidth * .81;
+  const atlas = document.createElement('canvas');
+  atlas.width = cellWidth * 12;
+  atlas.height = cellHeight * 8;
+  const ctx = atlas.getContext('2d');
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, atlas.width, atlas.height);
+  ctx.fillStyle = 'black';
+  ctx.font = 'italic 146px Baskerville, "Times New Roman", Georgia, serif';
+
+  const inkWidths = new Map();
+  for (const letter of new Set(phrase.replaceAll(' ', ''))) {
+    const index = letter.charCodeAt(0) - 32;
+    const left = index % 12 * cellWidth + .007 * atlas.width;
+    const top = Math.floor(index / 12) * cellHeight;
+    const { actualBoundingBoxLeft: inkLeft, actualBoundingBoxRight: inkRight } = ctx.measureText(letter);
+    inkWidths.set(letter, inkLeft + inkRight);
+    ctx.fillText(letter, left + (cropWidth + inkLeft - inkRight) / 2, top + 135);
+  }
+  return { uri: atlas.toDataURL(), inkWidths, cropWidth, cellHeight };
+}
+
+function heartMesh() {
+  const steps = 56;
+  const rings = 12;
+  const depth = .46;
+  function outline(angle) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const rounding = .062 + .044 * c;
+    return [
+      s * (rounding + (1 - rounding) * s * s),
+      (13 * c - 5 * Math.cos(2 * angle) - 2 * Math.cos(3 * angle) - Math.cos(4 * angle) + 2.8) / 15.7,
+    ];
+  }
+  const vertices = [];
+  for (let i = 0; i <= rings; i++) {
+    const phi = Math.PI * i / rings;
+    const s = Math.sin(phi);
+    const c = Math.cos(phi);
+    const ring = [];
+    for (let j = 0; j <= steps; j++) {
+      const theta = 2 * Math.PI * (j % steps) / steps;
+      const [x, y] = outline(theta);
+      const before = outline(theta - .004);
+      const after = outline(theta + .004);
+      const dx = after[0] - before[0];
+      const dy = after[1] - before[1];
+      const normal = i === 0 || i === rings ? [0, 0, Math.sign(c)]
+        : normalize([-dy * depth * s, dx * depth * s, (dx * y - dy * x) * c]);
+      ring.push([x * s, y * s, depth * c, ...normal, 0, 0]);
+    }
+    vertices.push(ring);
+  }
+
+  const triangles = [];
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < steps; j++) {
+      const a = vertices[i][j], b = vertices[i][j + 1];
+      const c = vertices[i + 1][j], d = vertices[i + 1][j + 1];
+      triangles.push(...a, ...b, ...c, ...b, ...d, ...c);
+    }
+  }
+  return new Float32Array(triangles);
+}
+
+function Scene() {
+  this.vertexSize = 8;
+  this.vertexAttributes = {
+    aPos: { size: 3, position: 0 },
+    aNor: { size: 3, position: 3 },
+    aUV: { size: 2, position: 6 },
+  };
+  this.vertexShader = `#version 300 es
+    in vec3 aPos, aNor;
+    in vec2 aUV;
+    out vec3 vNormal, vSparkColor, vEyePosition;
+    out vec2 vUV;
+    uniform mat4 uMF, uMI;
+    uniform vec2 uFit;
+    void main() {
+      vec4 p = uMF * vec4(aPos, 1.);
+      gl_Position = vec4(p.xy * uFit, -.53 * p.z, p.w);
+      vNormal = (vec4(aNor, 0.) * uMI).xyz;
+      vSparkColor = aNor;
+      vEyePosition = p.xyz;
+      vUV = aUV;
+    }
+  `;
+  this.fragmentShader = `#version 300 es
+    precision highp float;
+    in vec3 vNormal, vSparkColor, vEyePosition;
+    in vec2 vUV;
+    out vec4 fragColor;
+    uniform sampler2D uSampler[16];
+    uniform int uTexture, uSurface;
+    uniform float uSheer, uSparkOpacity;
+    uniform vec3 uAmbient;
+    uniform vec2 uInkSweep;
+    uniform vec4 uFlares[3];
+
+    float reflectedFlare(vec4 flare, vec3 normal, vec3 view) {
+      vec3 offset = flare.xyz - vEyePosition;
+      float distanceSquared = max(.001, dot(offset, offset));
+      vec3 light = offset * inversesqrt(distanceSquared);
+      float diffuse = max(0., dot(normal, light));
+      float edge = pow(1. - abs(dot(normal, view)), 2.);
+      float reflection = pow(max(0., dot(normal, normalize(light + view))), 22.);
+      return flare.w * (.40 * diffuse + .50 * reflection + .13 * edge)
+        / (1. + 3.4 * distanceSquared);
+    }
+
+    void main() {
+      if (uTexture == 0) {
+        float alpha = 1. - texture(uSampler[0], vUV).r * uSheer;
+        if (alpha < .035) discard;
+        float lit = smoothstep(-.14, .20, vEyePosition.y);
+        vec3 ink = mix(uAmbient * vec3(.98, .92, .91), uAmbient, lit);
+        float textX = vEyePosition.x / (1. - vEyePosition.z / 3.);
+        float distanceToSweep = textX - uInkSweep.x;
+        float sweep = uInkSweep.y * exp(-28. * distanceToSweep * distanceToSweep);
+        ink = mix(ink, vec3(1., .83, .60), sweep * .60);
+        fragColor = vec4(ink, alpha);
+      } else if (uSurface == 1) {
+        vec3 n = normalize(vNormal);
+        vec3 view = normalize(vec3(0., 0., 3.) - vEyePosition);
+        vec3 key = normalize(vec3(-1.60, 1.65, 2.20) - vEyePosition);
+        vec3 halfKey = normalize(key + view);
+        vec3 back = normalize(vec3(.95, .60, -1.45) - vEyePosition);
+        vec3 fillLight = normalize(vec3(1.5, -.45, 1.15) - vEyePosition);
+        float diffuse = max(0., dot(key, n));
+        float fill = max(0., dot(n, fillLight));
+        float softbox = pow(max(0., dot(n, halfKey)), 25.);
+        float broad = pow(max(0., dot(n, halfKey)), 5.);
+        float fresnel = pow(1. - abs(dot(n, view)), 2.8);
+        float rim = fresnel * (.12 + .88 * pow(max(0., dot(n, back)), 2.));
+        vec3 color = uAmbient * (.16 + .70 * diffuse + .16 * fill)
+          + vec3(1., .73, .69) * (.18 * softbox + .075 * broad)
+          + vec3(.70, .32, .47) * rim * .44;
+        color += vec3(1., .83, .58) * reflectedFlare(uFlares[0], n, view);
+        color += vec3(1., .28, .42) * reflectedFlare(uFlares[1], n, view);
+        color += vec3(1., .63, .34) * reflectedFlare(uFlares[2], n, view);
+        float haze = .24 * smoothstep(-.06, .85, -vEyePosition.z);
+        fragColor = vec4(mix(color, vec3(.20, .075, .125), haze), 1.);
+      } else if (uSurface == 2) {
+        float distanceToSpine = abs(vUV.y);
+        float crossSection = .67 * exp(-42. * distanceToSpine * distanceToSpine)
+          + .31 * exp(-6.5 * distanceToSpine * distanceToSpine);
+        float tail = pow(vUV.x, 1.35) * (1. - smoothstep(.86, 1., vUV.x));
+        vec3 hot = mix(vSparkColor, vec3(1., .94, .83), .37 * tail);
+        fragColor = vec4(hot, uSparkOpacity * crossSection * tail);
+      } else if (uSurface == 3) {
+        float radiusSquared = dot(vUV, vUV);
+        float core = .86 * exp(-48. * radiusSquared);
+        float glow = .31 * exp(-6.7 * radiusSquared);
+        vec3 hot = mix(vSparkColor, vec3(1., .96, .86), core);
+        fragColor = vec4(hot, uSparkOpacity * (core + glow));
+      } else if (uSurface == 4) {
+        float radiusSquared = dot(vUV, vUV);
+        float glow = exp(-3.5 * radiusSquared) * (1. - smoothstep(.33, 1., radiusSquared));
+        fragColor = vec4(vSparkColor, uSparkOpacity * glow);
+      } else {
+        vec2 uv = abs(vUV);
+        float radiusSquared = dot(uv, uv);
+        float arms = exp(-68. * uv.x) * exp(-4.3 * uv.y)
+          + exp(-68. * uv.y) * exp(-5.2 * uv.x);
+        float core = .54 * exp(-31. * radiusSquared);
+        float glow = .21 * exp(-5. * radiusSquared);
+        float mask = 1. - smoothstep(.40, 1., radiusSquared);
+        fragColor = vec4(mix(vSparkColor, vec3(1., .93, .83), core),
+                         uSparkOpacity * mask * (core + .52 * arms + glow));
+      }
+    }
+  `;
+
+  const phrase = 'I love you';
+  const atlas = makeLetterAtlas(phrase);
+  const focalLength = 3;
+  const matrix = new Matrix();
+  const worldStart = performance.now();
+  const solid = rgb => ({ ambient: rgb, diffuse: [0, 0, 0], specular: [0, 0, 0, 1] });
+  const heart = heartMesh();
+  const rose = solid([.76, .23, .33]);
+  const cherry = solid([.66, .095, .21]);
+  const blush = solid([.95, .46, .55]);
+  const mauve = solid([.52, .18, .35]);
+  const hearts = [
+    [-.84, -.26, .24, .143, -.22, -.55, rose],
+    [-.70,  .41, -.48, .093, .24, .61, cherry],
+    [-.56, -.46, -.14, .070, -.37, -.49, mauve],
+    [-.34,  .48,  .10, .052, -.19, .53, blush],
+    [-.17, -.39,  .42, .050, .30, -.55, blush],
+    [ .05,  .52, -.28, .084, .16, -.43, mauve],
+    [ .23, -.45, -.42, .067, .35, .64, rose],
+    [ .38,  .44,  .18, .071, -.28, .62, rose],
+    [ .55, -.34,  .35, .115, -.17, .39, cherry],
+    [ .81,  .32,  .22, .151, .31, -.38, blush],
+    [ .91, -.23, -.44, .074, -.22, -.64, rose],
+    [ .99,  .09, -.24, .046, .22, .36, mauve],
+    [-.96,  .19, -.47, .047, -.21, .42, blush],
+  ];
+  const letterDepths = [-.64, .12, -.07, .095, .025, .66, -.28, .52];
+  const spacing = { lo: 8, ov: 2, ve: 3, yo: 5, ou: 6 };
+  const wordGap = 43;
+  const letterGap = (letter, next) => next === ' ' ? wordGap : (spacing[letter + next] ?? 0);
+  const phraseWidth = [...phrase].reduce((sum, char, index) =>
+    char === ' ' ? sum : sum + atlas.inkWidths.get(char) + letterGap(char, phrase[index + 1]), 0);
+  const fontScale = 1.54 / phraseWidth;
+  let advance = -phraseWidth / 2;
+  let letterIndex = 0;
+  let wordIndex = 0;
+  const letters = [];
+  for (const [index, char] of [...phrase].entries()) {
+    if (char === ' ') {
+      wordIndex++;
+      continue;
+    }
+    const inkWidth = atlas.inkWidths.get(char);
+    const z = letterDepths[letterIndex++];
+    // All ink aligns in projection at yaw = pitch = 0, despite its different depths.
+    const w = 1 - z / focalLength;
+    const meshWidth = fontScale * atlas.cropWidth * w;
+    letters.push({
+      mesh: Shape.text(char),
+      x: (advance + inkWidth / 2) * fontScale * w - meshWidth / 2,
+      y: .060 * w, z,
+      width: meshWidth, height: fontScale * atlas.cellHeight / 2 * w,
+      tintRange: wordIndex === 1 ? .32 : .12,
+    });
+    advance += inkWidth + letterGap(char, phrase[index + 1]);
+  }
+
+  const burstTime = .18;
+  const flightTrail = .36;
+  const bloomTime = 2.48;
+  const bloomHold = 1.65;
+  const sourceBursts = [
+    [7, .38, [1, .63, .62]], [9, .18, [1, .66, .49]], [8, .29, [1, .48, .57]],
+    [0, .095, [1, .71, .49]], [1, .43, [1, .49, .62]], [3, .237, [1, .78, .59]],
+  ].map(([index, delay, color], sector, sources) => ({
+    index, delay, color,
+    sparks: Array.from({ length: 33 }, (_, i) => {
+      const seed = (sector * 33 + i + 1);
+      const sample = n => (1 + Math.sin(seed * n)) / 2;
+      const angle = seed * 2.399963;
+      const speed = .075 + .245 * sample(8.63);
+      return {
+        fraction: (sector + (i + .55 * sample(11.72)) / 33) / sources.length,
+        spread: (sample(3.33) - .5) * .095,
+        velocity: [speed * Math.cos(angle), speed * Math.sin(angle), -.23 * sample(13.39)],
+        gatherAt: bloomTime - .36 + .34 * sample(4.51),
+        size: .012 + .016 * sample(21.4),
+        bright: i % 6 === 0,
+        shed: i % 3 === 0,
+      };
+    }),
+  }));
+  const sourcesByHeart = new Map(sourceBursts.map(source => [source.index, source]));
+  const neutral = solid([0, 0, 0]);
+  const clamp01 = value => Math.min(1, Math.max(0, value));
+  const ease = value => value * value * (3 - 2 * value);
+  let fontReady = false;
+  let opening = 0;
+  let lastFrameTime = worldStart;
+  let lastCelebration = -Infinity;
+  const origins = new Map();
+
+  function addSparkGlow(vertices, x, y, z, radius, color) {
+    const a = [x - radius, y - radius, z, ...color, -1, -1];
+    const b = [x + radius, y - radius, z, ...color,  1, -1];
+    const c = [x - radius, y + radius, z, ...color, -1,  1];
+    const d = [x + radius, y + radius, z, ...color,  1,  1];
+    vertices.push(...a, ...b, ...c, ...b, ...d, ...c);
+  }
+
+  function addSparkTrail(vertices, path, halfWidth, color) {
+    let previousLeft, previousRight;
+    const end = path.length - 1;
+    for (const [index, [x, y, z]] of path.entries()) {
+      const before = path[Math.max(0, index - 1)];
+      const after = path[Math.min(end, index + 1)];
+      const dx = after[0] - before[0];
+      const dy = after[1] - before[1];
+      const progress = index / end;
+      const scale = halfWidth * (.60 + .40 * progress) / Math.max(.00001, Math.hypot(dx, dy));
+      const left = [x + dy * scale, y - dx * scale, z, ...color, progress, -1];
+      const right = [x - dy * scale, y + dx * scale, z, ...color, progress, 1];
+      if (previousLeft) vertices.push(...previousLeft, ...previousRight, ...left, ...previousRight, ...right, ...left);
+      previousLeft = left;
+      previousRight = right;
+    }
+  }
+
+  function drawLight(vertices, surface, opacity) {
+    if (vertices.length === 0 || opacity <= 0) return;
+    setUniform('1i', 'uSurface', surface);
+    setUniform('1f', 'uSparkOpacity', opacity);
+    matrix.draw(new Float32Array(vertices), neutral);
+  }
+
+  function bloomPoint(spark, age) {
+    const angle = spark.fraction * 2 * Math.PI;
+    const y = 13 * Math.cos(angle) - 5 * Math.cos(2 * angle)
+      - 2 * Math.cos(3 * angle) - Math.cos(4 * angle) + 2.8;
+    const pulse = 1 + .11 * (1 - Math.exp(-3.7 * Math.max(0, age - bloomTime)));
+    const radius = pulse * (1 + spark.spread);
+    return [
+      1.13 * Math.sin(angle) ** 3 * radius,
+      .047 * y * radius + .027,
+      -1.02 + .13 * Math.cos(angle * 2) - spark.spread,
+    ];
+  }
+
+  function sparkPosition(source, spark, origin, age) {
+    const localAge = age - source.delay;
+    const target = bloomPoint(spark, age);
+    if (age >= spark.gatherAt) return target;
+
+    const [vx, vy, vz] = spark.velocity;
+    if (localAge < burstTime) {
+      const expansion = 1 - (1 - clamp01(localAge / burstTime)) ** 3;
+      return [origin[0] + vx * expansion, origin[1] + vy * expansion, origin[2] + vz * expansion];
+    }
+
+    const travel = ease(clamp01((localAge - burstTime) / (spark.gatherAt - source.delay - burstTime)));
+    const bend = .38 * Math.sin(Math.PI * travel);
+    const from = [origin[0] + vx, origin[1] + vy, origin[2] + vz];
+    return [
+      from[0] + (target[0] - from[0]) * travel - vy * bend,
+      from[1] + (target[1] - from[1]) * travel + vx * bend,
+      from[2] + (target[2] - from[2]) * travel - .22 * Math.sin(Math.PI * travel),
+    ];
+  }
+
+  function drawHeartBloom(age, time) {
+    const bloomAge = Math.max(0, age - bloomTime);
+    const ignited = age >= bloomTime;
+    const radiance = ignited ? Math.exp(-1.9 * Math.max(0, bloomAge - bloomHold)) : 0;
+    const wash = [];
+    addSparkGlow(wash, 0, .03, -1.78, 1.64, [.67, .24, .46]);
+    if (ignited) addSparkGlow(wash, 0, -.12, -1.62, 1.05, [1, .54, .51]);
+    const washStrength = .22 * clamp01(age * 3) + .24 * radiance;
+    drawLight(wash, 4, washStrength);
+
+    const trails = [];
+    const points = [];
+    const glints = [];
+    const flashes = [];
+    const embers = [];
+    for (const source of sourceBursts) {
+      const origin = origins.get(source.index);
+      const localAge = age - source.delay;
+      if (!origin || localAge < 0) continue;
+      if (localAge < .28) {
+        addSparkGlow(flashes, ...origin, .11 + .88 * localAge,
+          source.color.map(channel => channel * (1 - localAge / .28)));
+      }
+
+      for (const [index, spark] of source.sparks.entries()) {
+        const head = sparkPosition(source, spark, origin, age);
+        const twinkle = .84 + .16 * Math.sin(time * 4.1 + index * 3.4 + source.index);
+        const flare = ignited ? .90 + .34 * radiance + .20 * Math.exp(-4.2 * bloomAge) : 1;
+        const appearing = ease(clamp01(localAge * 24));
+        const radius = spark.size * twinkle * flare * appearing;
+        addSparkGlow(spark.bright ? glints : points, ...head, radius * (spark.bright ? 1.9 : 1), source.color);
+
+        if (age < spark.gatherAt + flightTrail) {
+          const tailAge = Math.max(source.delay, age - flightTrail);
+          const path = Array.from({ length: 7 }, (_, step) =>
+            sparkPosition(source, spark, origin, tailAge + (age - tailAge) * step / 6));
+          addSparkTrail(trails, path, .010, source.color);
+        }
+
+        if (spark.shed && ignited && bloomAge < 1.48) {
+          const arc = t => {
+            const expansion = 1 - Math.exp(-2.15 * t);
+            return [
+              head[0] * (1 + .22 * expansion) + .31 * spark.velocity[0] * expansion,
+              head[1] * (1 + .26 * expansion) + .24 * spark.velocity[1] * expansion - .16 * t * t,
+              head[2] + .16 * expansion,
+            ];
+          };
+          const since = Math.max(0, bloomAge - .24);
+          const path = Array.from({ length: 5 }, (_, step) => arc(since + (bloomAge - since) * step / 4));
+          addSparkTrail(embers, path, .011, source.color);
+        }
+      }
+    }
+    drawLight(flashes, 4, .58);
+    drawLight(trails, 2, .76);
+    drawLight(embers, 2, .95 * (1 - clamp01(bloomAge / 1.48)) ** 1.2);
+    drawLight(points, 3, .73 + .19 * radiance);
+    drawLight(glints, 5, .87);
+  }
+
+  function lightHearts(elapsed) {
+    const m = matrix.get();
+    const centerAge = elapsed - bloomTime;
+    const centerEnergy = centerAge >= 0 ? 1.36 * Math.exp(-3.6 * centerAge) : 0;
+    const lights = [[0, 0, -1.02, centerEnergy], [0, 0, 0, 0], [0, 0, 0, 0]];
+    for (const source of sourceBursts) {
+      const origin = origins.get(source.index);
+      const age = elapsed - source.delay;
+      if (!origin || age < 0) continue;
+      const energy = .88 * Math.exp(-8 * age);
+      const slot = origin[0] < 0 ? 1 : 2;
+      if (energy > lights[slot][3]) lights[slot] = [...origin, energy];
+    }
+    const inView = lights.flatMap(([x, y, z, energy]) => [
+      m[0] * x + m[4] * y + m[8] * z,
+      m[1] * x + m[5] * y + m[9] * z,
+      m[2] * x + m[6] * y + m[10] * z,
+      energy,
+    ]);
+    setUniform('4fv', 'uFlares[0]', new Float32Array(inView));
+  }
+
+  this.init = () => {
+    gl.clearColor(0, 0, 0, 0);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    loadTexture(0, atlas.uri, () => {
+      fontReady = true;
+      needsRender = true;
+    });
+    setUniform('1iv', 'uSampler', Int32Array.from({ length: 16 }, (_, i) => i));
+  };
+
+  this.update = () => {
+    const now = performance.now();
+    const motion = !reducedMotion.matches;
+    const time = motion ? (now - worldStart) / 1000 : 0;
+    const fireworkAge = (now - celebrationStart) / 1000;
+    const frameDelta = Math.min((now - lastFrameTime) / 1000, .05);
+    lastFrameTime = now;
+    const target = aligned ? 1 : 0;
+    opening = motion ? opening + (target - opening) * (1 - Math.exp(-6.2 * frameDelta)) : target;
+    const spread = opening * opening * (3 - 2 * opening);
+    const pixelRatio = Math.min(devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
+    const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+    if (!motion && !needsRender && canvas.width === width && canvas.height === height) return;
+    needsRender = false;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    gl.viewport(0, 0, width, height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const narrow = width < height;
+    const fit = Math.min(width, height) * (narrow ? .94 : 1.11);
+    setUniform('2f', 'uFit', fit / width, fit / height);
+    matrix.identity().perspective(focalLength).turnX(pitch).turnY(yaw);
+    if (lastCelebration !== celebrationStart) {
+      origins.clear();
+      lastCelebration = celebrationStart;
+    }
+    const age = motion ? fireworkAge : bloomTime + bloomHold + 1.5;
+    lightHearts(aligned && motion ? age : -Infinity);
+
+    setUniform('1i', 'uSurface', 1);
+    hearts.forEach(([x, y, z, size, tilt, spin, material], index) => {
+      const wave = time * .72 + index * 1.8;
+      const side = Math.sign(x);
+      const edgeRoom = 1 - Math.min(1, Math.abs(x));
+      const shift = spread * (.022 + .21 * edgeRoom) * (narrow ? .68 : 1);
+      const position = [x + side * shift, y + .021 * Math.sin(wave) + Math.sign(y) * .026 * spread, z - .045 * spread];
+      const source = sourcesByHeart.get(index);
+      const burstAge = aligned && source ? age - source.delay : -Infinity;
+      if (burstAge >= 0 && !origins.has(index)) origins.set(index, position);
+      if (burstAge >= .10) return;
+      const contraction = ease(clamp01(burstAge / .10));
+      matrix.push()
+            .move(...position)
+            .turnZ(tilt + .08 * Math.sin(wave) + side * .12 * spread)
+            .turnY(spin + .20 * Math.sin(wave * .83))
+            .turnX(-.18 + .13 * Math.cos(wave))
+            .scale(size * (1 - contraction)).draw(heart, material).pop();
+    });
+
+    if (aligned) {
+      gl.depthMask(false);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      drawHeartBloom(age, time);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(true);
+    }
+    if (!fontReady) return;
+
+    setUniform('1f', 'uSheer', 1);
+    const sweepProgress = aligned && motion ? clamp01((age - bloomTime + .43) / .70) : 1;
+    setUniform('2f', 'uInkSweep', -.98 + 1.96 * sweepProgress, Math.sin(Math.PI * sweepProgress));
+    const angle = Math.hypot(yaw, pitch);
+    const viewDepth = ({ x, y, z, width }) =>
+      Math.sin(pitch) * y + Math.cos(pitch) * (Math.cos(yaw) * z - Math.sin(yaw) * (x + width / 2));
+    const backToFront = [...letters].sort((a, b) => viewDepth(a) - viewDepth(b));
+    for (const { mesh, x, y, z, width, height, tintRange } of backToFront) {
+      const proximity = Math.max(0, 1 - angle / tintRange);
+      const tint = proximity * proximity * (3 - 2 * proximity);
+      const material = solid([.99, .84 + .082 * tint, .88 + .02 * tint]);
+      matrix.push().move(x, y, z).scale(width, height, 1).draw(mesh, material, 0).pop();
+    }
+  };
+}
+
+if (canvas.getContext('webgl2')) {
+  gl_start(canvas, new Scene());
+} else {
+  errorLabel.textContent = 'WebGL 2 is unavailable. Open this project in a browser with WebGL 2 enabled.';
+  errorLabel.hidden = false;
+}
+</script>
+</body>
+</html>

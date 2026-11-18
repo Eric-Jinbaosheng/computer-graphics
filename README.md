@@ -17,3 +17,5 @@ Static HTML and JavaScript/WebGL. Open the live site in a browser with WebGL sup
 - [Assignment 7: Groove Bot](https://eric-jinbaosheng.github.io/computer-graphics/hw7/) — hierarchical animation with personality buttons and motion sliders.
 
 - [Assignment 8: Kinetic / 01](https://eric-jinbaosheng.github.io/computer-graphics/hw8/) — two-link IK, pick-and-place interaction, planted feet, and JavaScript noise.
+
+- [Assignment 9: A Love Letter](https://eric-jinbaosheng.github.io/computer-graphics/hw9/) — perspective-aligned 3D text and a heart-shaped firework.
